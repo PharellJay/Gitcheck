@@ -47,12 +47,14 @@ sudo INSTALL_DIR=/usr/local/bin ./install.sh
 ```bash
 gitcheck              # scan the current folder
 gitcheck ~/projects   # scan a specific folder
+gitcheck -n ~/projects  # skip fetching (instant, works offline)
 gitcheck --help
 ```
 
 - Repos nested inside other repos are found too.
 - `.git` and `node_modules` folders are skipped to keep it fast.
-- The ahead/behind info reflects your last `git fetch`; gitcheck doesn't contact any remotes.
+- Every repo is fetched first (in parallel), so ahead/behind is current. Fetching never changes your files or branches. Repos whose fetch fails, for example because they need a password, are flagged in red instead of being silently shown as in sync. Use `-n`/`--no-fetch` to skip this when offline; ahead/behind then reflects your last fetch.
+- Files matched by `.gitignore` never appear as untracked. If a file you expect to be ignored still shows up as `??`, the pattern doesn't match it; `git check-ignore -v <file>` shows which rule (if any) applies.
 
 ## Uninstall
 

@@ -1,27 +1,72 @@
 #!/usr/bin/env bash
 # gitcheck: show git status for every repo under a directory (default: current dir)
 
-if [[ ${1:-} == "-h" || ${1:-} == "--help" ]]; then
-  echo "Usage: gitcheck [directory]"
-  echo "Finds every git repository under [directory] (default: .) and shows its status."
-  exit 0
-fi
+usage() {
+  echo "Usage: gitcheck [-n|--no-fetch] [directory]"
+  echo "Finds every git repository under [directory] (default: .), fetches each one"
+  echo "so ahead/behind is up to date, and shows its status."
+  echo
+  echo "  -n, --no-fetch  skip 'git fetch' (faster, works offline, but may be stale)"
+  echo "  -h, --help      show this help"
+}
 
-root="${1:-.}"
+fetch=true
+root=""
+for arg in "$@"; do
+  case $arg in
+    -h|--help) usage; exit 0 ;;
+    -n|--no-fetch) fetch=false ;;
+    -*) echo "gitcheck: unknown option '$arg'" >&2; usage >&2; exit 1 ;;
+    *)
+      if [[ -n $root ]]; then
+        echo "gitcheck: only one directory can be given" >&2
+        exit 1
+      fi
+      root=$arg
+      ;;
+  esac
+done
+root="${root:-.}"
+
 if [[ ! -d $root ]]; then
   echo "gitcheck: '$root' is not a directory" >&2
   exit 1
 fi
 
-find "$root" -name node_modules -prune -o -name .git -print -prune 2>/dev/null | sort |
+repos=()
 while IFS= read -r gitpath; do
-  repo="${gitpath%/.git}"
+  repos+=("${gitpath%/.git}")
+done < <(find "$root" -name node_modules -prune -o -name .git -print -prune 2>/dev/null | sort)
+
+# Fetch all repos in parallel (8 at a time). Each failed fetch leaves a marker
+# file named after the repo's index so the report below can flag it.
+if $fetch && (( ${#repos[@]} > 0 )); then
+  faildir=$(mktemp -d)
+  trap 'rm -rf "$faildir"' EXIT
+  echo "Fetching ${#repos[@]} repos..." >&2
+  for i in "${!repos[@]}"; do
+    printf '%s\0%s\0' "$i" "${repos[$i]}"
+  done | xargs -0 -n 2 -P 8 sh -c '
+    [ -n "$(git -C "$2" remote 2>/dev/null)" ] || exit 0
+    # Never stop to ask for a username/password; just report the failure
+    GIT_TERMINAL_PROMPT=0 git -C "$2" fetch --quiet </dev/null >/dev/null 2>&1 ||
+      touch "$0/$1"
+  ' "$faildir"
+fi
+
+for i in "${!repos[@]}"; do
+  repo=${repos[$i]}
   out=$(git -C "$repo" status --short --branch 2>/dev/null) || continue
+
+  note=""
+  if [[ -n ${faildir:-} && -e $faildir/$i ]]; then
+    note=$'\e[31m  (fetch failed, remote status may be stale)\e[0m'
+  fi
 
   # Clean = only the branch line, and not ahead of or behind the remote
   if [ "$(wc -l <<<"$out")" -eq 1 ] && [[ $out != *"[ahead"* && $out != *"[behind"* ]]; then
-    printf '\e[32m✔ %s\e[0m  %s\n' "$repo" "${out#\#\# }"
+    printf '\e[32m✔ %s\e[0m  %s%s\n' "$repo" "${out#\#\# }" "$note"
   else
-    printf '\e[33m● %s\e[0m\n%s\n\n' "$repo" "$out"
+    printf '\e[33m● %s\e[0m%s\n%s\n\n' "$repo" "$note" "$out"
   fi
 done
