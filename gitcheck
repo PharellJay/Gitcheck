@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+# gitcheck: show git status for every repo under a directory (default: current dir)
+
+if [[ ${1:-} == "-h" || ${1:-} == "--help" ]]; then
+  echo "Usage: gitcheck [directory]"
+  echo "Finds every git repository under [directory] (default: .) and shows its status."
+  exit 0
+fi
+
+root="${1:-.}"
+if [[ ! -d $root ]]; then
+  echo "gitcheck: '$root' is not a directory" >&2
+  exit 1
+fi
+
+find "$root" -name node_modules -prune -o -name .git -print -prune 2>/dev/null | sort |
+while IFS= read -r gitpath; do
+  repo="${gitpath%/.git}"
+  out=$(git -C "$repo" status --short --branch 2>/dev/null) || continue
+
+  # Clean = only the branch line, and not ahead of or behind the remote
+  if [ "$(wc -l <<<"$out")" -eq 1 ] && [[ $out != *"[ahead"* && $out != *"[behind"* ]]; then
+    printf '\e[32m✔ %s\e[0m  %s\n' "$repo" "${out#\#\# }"
+  else
+    printf '\e[33m● %s\e[0m\n%s\n\n' "$repo" "$out"
+  fi
+done
